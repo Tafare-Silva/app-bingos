@@ -1,0 +1,56 @@
+{% extends 'base.html' %}
+
+{% block title %}Histórico de {{ movimento.nome }}{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="bi bi-clock-history"></i> Histórico do Movimento: <strong>{{ movimento.nome }}</strong></h2>
+        <a href="{% url 'dashboard' %}" class="btn btn-secondary">
+            <i class="bi bi-arrow-left"></i> Voltar ao Dashboard
+        </a>
+    </div>
+
+    <!-- Card de Saldo Atual -->
+    <div class="card bg-warning text-dark mb-4">
+        <div class="card-body text-center">
+            <h5 class="card-title">Saldo Pendente Atual</h5>
+            <h3 class="display-4 fw-bold">{{ saldo_pendente }}</h3>
+            <p class="card-text">Cartelas que estão atualmente com o movimento, aguardando acerto.</p>
+        </div>
+    </div>
+
+    <!-- Linha do Tempo do Histórico -->
+    <h3 class="mb-3">Eventos</h3>
+    <div class="list-group">
+        {% for evento in historico %}
+        <div class="list-group-item list-group-item-action flex-column align-items-start">
+            <div class="d-flex w-100 justify-content-between">
+                <h5 class="mb-1">
+                    {% if evento.tipo == 'Distribuição' %}
+                        <span class="badge bg-primary"><i class="bi bi-truck"></i> {{ evento.tipo }}</span>
+                    {% else %}
+                        <span class="badge bg-success"><i class="bi bi-check-circle"></i> {{ evento.tipo }}</span>
+                    {% endif %}
+                </h5>
+                {% if evento.tipo == 'Acerto' %}
+                    <a href="{% url 'editar_acerto' evento.id %}" class="btn btn-sm btn-outline-secondary me-2">
+                        <i class="bi bi-pencil"></i> Editar
+                    </a>
+                {% endif %}
+                <small>{{ evento.data|date:"d/m/Y \à\s H:i" }}</small>
+            </div>
+            <p class="mb-1 fs-5">{{ evento.descricao }}</p>
+            {% if evento.ator != 'N/A' %}
+                <small class="text-muted">Responsável: {{ evento.ator }}</small>
+            {% endif %}
+        </div>
+        {% empty %}
+        <div class="list-group-item">
+            <p class="text-center text-muted mb-0">Nenhum evento registrado para este movimento ainda.</p>
+        </div>
+        {% endfor %}
+    </div>
+
+</div>
+{% endblock %}

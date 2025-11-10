@@ -1,0 +1,96 @@
+{% extends 'base.html' %}
+{% load static %} <!-- Não se esqueça de carregar os arquivos estáticos -->
+
+{% block title %}Comprovante de Acerto{% endblock %}
+
+{% block extra_head %}
+    <!-- CARREGA O CSS DE IMPRESSÃO -->
+    <link rel="stylesheet" href="{% static 'css/print_receipt.css' %}" media="print">
+{% endblock %}
+
+
+{% block content %}
+<div class="container mt-4">
+
+    <!-- =========== ÁREA DO RECIBO COMEÇA AQUI =========== -->
+    <div id="area-recibo" class="border p-3" style="max-width: 400px; margin: auto; background: #fff;">
+        
+        <!-- Cabeçalho do Recibo -->
+        <div class="text-center mb-3">
+            <h4><i class="fa-solid fa-church"></i>PAROQUIA SÃO SEBASTIÃO</h4>
+            <p class="mb-0">Comprovante Acerto de Bingo</p>
+            <hr>
+        </div>
+
+         <!-- Informações do Acerto -->
+    <p><strong>Movimento:</strong> {{ acerto.movimento.nome }}</p>
+    <p><strong>Responsável:</strong> {{ acerto.membro_pastoral }}</p>
+    <p><strong>Data/Hora:</strong> {{ acerto.data|date:"d/m/Y H:i" }}</p>
+    <hr>
+
+    <!-- Detalhes das Cartelas -->
+    <h5>Resumo do Acerto</h5>
+    <table class="table table-sm">
+        <tbody>
+            <tr>
+                <td>Cartelas Vendidas:</td>
+                <td class="text-end">{{ acerto.cartelas_vendidas.count }}</td>
+            </tr>
+            <tr>
+                <td>Cartelas Devolvidas:</td>
+                <td class="text-end">{{ acerto.cartelas_devolvidas.count }}</td>
+            </tr>
+             <tr>
+                <td>Cartelas Cortesia:</td>
+                <td class="text-end">{{ acerto.cartelas_cortesia.count }}</td>
+            </tr>
+        </tbody>
+    </table>
+    <hr>
+
+    <!-- Detalhes Financeiros - COM AS CORREÇÕES -->
+    <h5>Financeiro</h5>
+     <table class="table table-sm">
+        <tbody>
+            <tr>
+                <!-- CORREÇÃO 1: Mostrando o valor da cartela -->
+                <td>Valor Total ({{ acerto.cartelas_vendidas.count }} x R$ {{ valor_cartela|stringformat:".2f" }}):</td>
+                <td class="text-end">R$ {{ acerto.valor_total|stringformat:".2f" }}</td>
+            </tr>
+            <tr>
+                <td>Valor Recebido:</td>
+                <td class="text-end">R$ {{ acerto.valor_recebido|stringformat:".2f" }}</td>
+            </tr>
+            <tr>
+                <!-- CORREÇÃO 2: Mostrando o troco calculado -->
+                <td><strong>Troco:</strong></td>
+                <td class="text-end"><strong>R$ {{ troco|stringformat:".2f" }}</strong></td>
+            </tr>
+            <tr>
+                <!-- CORREÇÃO 3: Mostrando o tipo de pagamento -->
+                <td>Tipo Pagamento:</td>
+                <td class="text-end">{{ acerto.get_tipo_pagamento_display }}</td>
+            </tr>
+        </tbody>
+    </table>
+    <hr>
+
+        <!-- Rodapé -->
+        <div class="text-center">
+            <small>Deus abençoe seu empenho!</small>
+        </div>
+
+    </div>
+    <!-- =========== ÁREA DO RECIBO TERMINA AQUI =========== -->
+
+    <!-- Botão de Imprimir (fora da área do recibo) -->
+    <div class="text-center mt-4 no-print">
+        <button onclick="window.print();" class="btn btn-primary">
+            <i class="bi bi-printer"></i> Imprimir Comprovante
+        </button>
+        <a href="{% url 'dashboard' %}" class="btn btn-secondary">Voltar</a>
+    </div>
+
+</div>
+
+{% endblock %}

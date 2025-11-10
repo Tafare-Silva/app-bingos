@@ -1,0 +1,53 @@
+/* static/css/print_receipt.css */
+
+/* Este bloco é executado na hora da impressão */
+@media print {
+
+    /* Esconde tudo que não está dentro da área do recibo */
+    body * {
+        visibility: hidden;
+    }
+
+    /* Torna visível apenas a área do recibo e seus conteúdos */
+    #area-recibo, #area-recibo * {
+        visibility: visible;
+    }
+
+    /* Posiciona a área do recibo no topo da página de impressão */
+    #area-recibo {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%; /* A largura será controlada pelo @page */
+    }
+    
+    /* Remove margens e preenchimentos padrão do navegador */
+    body {
+        padding: 0;
+        margin: 0;
+    }
+
+    /* Define o tamanho da página de impressão. 80mm é um padrão comum. */
+    @page {
+        size: 80mm auto; /* Largura de 80mm, altura automática */
+        margin: 5mm; /* Margem pequena ao redor */
+    }
+
+    /* Estilos gerais para o texto dentro do recibo */
+    #area-recibo {
+        font-family: 'Courier New', Courier, monospace; /* Fonte monoespaçada */
+        font-size: 10pt; /* Tamanho da fonte para impressoras térmicas */
+        color: #000;
+    }
+
+    /* Tira a decoração de links */
+    a {
+        text-decoration: none;
+        color: #000;
+    }
+
+    /* Esconde o botão de imprimir no próprio recibo impresso */
+    .no-print {
+        display: none !important;
+    }
+}

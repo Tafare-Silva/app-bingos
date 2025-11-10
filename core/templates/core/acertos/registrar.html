@@ -1,0 +1,263 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2"><i class="bi bi-cash-coin"></i> Registrar Acerto</h1>
+</div>
+
+<div class="card shadow">
+    <div class="card-body">
+        <form id="acertoForm" method="post">
+            {% csrf_token %}
+            
+            <!-- 1. Seleção do Movimento -->
+            <div class="mb-3">
+                <label for="movimentoSelect" class="form-label"><strong>1. Selecione o Movimento</strong></label>
+                <select name="movimento" class="form-select" required id="movimentoSelect">
+                    <option value="" data-pendentes="0">Selecione um movimento...</option>
+                    {% for m in movimentos %}
+                    <option value="{{ m.id }}" data-pendentes="{{ m.cartelas_pendentes }}">
+                        {{ m.nome }} (Pendentes: {{ m.cartelas_pendentes }})
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <!-- Campos de Acerto (inicialmente ocultos) -->
+            <div id="camposAcerto" class="mt-4 border-top pt-3" style="display: none;">
+                
+                <!-- 2. Detalhes do Acerto -->
+                <p><strong>2. Detalhes do Acerto</strong></p>
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label for="membroPastoral" class="form-label">Acertado por (Membro da Pastoral)</label>
+                        <input type="text" class="form-control" id="membroPastoral" name="membro_pastoral">
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label for="qtdVendidas" class="form-label">Quantidade de Cartelas Vendidas</label>
+                        <input type="number" class="form-control" id="qtdVendidas" name="qtd_vendidas" min="0" required>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label for="qtdDevolvidas" class="form-label">Quantidade de Cartelas Devolvidas</label>
+                        <input type="number" class="form-control" id="qtdDevolvidas" name="qtd_devolvidas" min="0" value="0">
+                    </div>
+                </div>
+
+                <!-- 3. Cortesias -->
+                <p><strong>3. Cortesias</strong></p>
+                <div class="alert alert-secondary">
+                    Cortesias Ganhadas (1 a cada 10 pagas): <strong id="cortesiasCalculadas">0</strong>
+                </div>
+               <div id="campoBuscaCortesia" style="display: none;">
+                    <label for="buscaCartelaCortesiaInput" class="form-label">Buscar Cartela para Cortesia</label>
+                    <div class="input-group mb-3">
+                        <input type="text" class="form-control" id="buscaCartelaCortesiaInput" placeholder="Digite o número da cartela...">
+                        <button class="btn btn-outline-primary" type="button" id="addCortesiaBtn">Adicionar</button>
+                    </div>
+                    <div class="form-text">Adicione as cartelas que serão entregues como cortesia.</div>
+
+                    <!-- Container para mostrar as cartelas selecionadas -->
+                    <div id="cortesiasSelecionadasContainer" class="mt-2 d-flex flex-wrap gap-2">
+                        <!-- As cartelas selecionadas aparecerão aqui como 'pills' -->
+                    </div>
+                </div>
+
+                <!-- 4. Pagamento -->
+                <p><strong>4. Pagamento</strong></p>
+                <div class="alert alert-success">
+                    Total a Pagar: <strong id="totalPagarCalculado">R$ 0,00</strong>
+                </div>
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label for="tipoPagamento" class="form-label">Forma de Pagamento</label>
+                        <select id="tipoPagamento" name="tipo_pagamento" class="form-select" required>
+                            {% for key, value in tipos_pagamento %}
+                            <option value="{{ key }}">{{ value }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label for="valorRecebido" class="form-label">Valor Recebido</label>
+                        <input type="text" class="form-control" id="valorRecebido" name="valor_recebido" required>
+                    </div>
+                </div>
+                <div id="trocoAlert" class="alert alert-info" style="display: none;">
+                    Troco: <strong id="trocoValue">R$ 0,00</strong>
+                </div>
+
+                <!-- 5. Observações -->
+                <p><strong>5. Observações</strong></p>
+                <div class="mb-3">
+                    <textarea class="form-control" id="observacoes" name="observacoes" rows="3"></textarea>
+                </div>
+
+                <div class="d-grid gap-2 d-md-flex justify-content-md-end mt-4">
+                    <button type="submit" class="btn btn-success btn-lg">
+                        <i class="bi bi-check-circle-fill"></i> Finalizar Acerto
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // --- Variáveis Globais ---
+    const VALOR_CARTELA = 40.00;
+    let cartelasCortesiaSelecionadas = [];
+
+    // --- Elementos Principais (Sempre Visíveis) ---
+    const movimentoSelect = document.getElementById('movimentoSelect');
+    const camposAcerto = document.getElementById('camposAcerto');
+    const form = document.getElementById('acertoForm');
+    
+    // --- Funções ---
+    function formatCurrency(value) {
+        return 'R$ ' + value.toFixed(2).replace('.', ',');
+    }
+
+    function renderizarCortesiasSelecionadas() {
+        const container = document.getElementById('cortesiasSelecionadasContainer');
+        if (!container) return; // Checagem de segurança
+
+        container.innerHTML = ''; // Limpa o container
+        cartelasCortesiaSelecionadas.forEach(cartela => {
+            const pill = document.createElement('span');
+            pill.className = 'badge bg-primary d-flex align-items-center';
+            pill.innerHTML = `
+                Cartela ${cartela.numero.padStart(4, '0')}
+                <button type="button" class="btn-close btn-close-white ms-2" data-id="${cartela.id}"></button>
+                <input type="hidden" name="cartelas_cortesia_ids[]" value="${cartela.id}">
+            `;
+            pill.querySelector('.btn-close').addEventListener('click', function() {
+                const idParaRemover = this.getAttribute('data-id');
+                cartelasCortesiaSelecionadas = cartelasCortesiaSelecionadas.filter(c => String(c.id) !== idParaRemover);
+                renderizarCortesiasSelecionadas();
+            });
+            container.appendChild(pill);
+        });
+    }
+
+    async function adicionarCartelaCortesia() {
+        const buscaInput = document.getElementById('buscaCartelaCortesiaInput');
+        if (!buscaInput) return;
+
+        const numero = buscaInput.value.trim();
+        if (!numero) return;
+
+        if (cartelasCortesiaSelecionadas.some(c => c.numero === numero)) {
+            alert('Esta cartela já foi adicionada.');
+            buscaInput.value = '';
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/buscar-cartela-por-numero/?numero=${numero}`);
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || 'Erro desconhecido');
+            
+            cartelasCortesiaSelecionadas.push(data);
+            renderizarCortesiasSelecionadas();
+            buscaInput.value = '';
+            buscaInput.focus(); // Foca no input para adicionar a próxima
+        } catch (error) {
+            alert(`Erro: ${error.message}`);
+        }
+    }
+
+    function calcularAcerto() {
+        // Pega os elementos aqui dentro, pois agora eles existem com certeza
+        const qtdVendidasInput = document.getElementById('qtdVendidas');
+        const cortesiasDisplay = document.getElementById('cortesiasCalculadas');
+        const campoBuscaCortesia = document.getElementById('campoBuscaCortesia');
+
+        const vendidas = parseInt(qtdVendidasInput.value) || 0;
+        const cortesiasGanhadas = Math.floor(vendidas / 10);
+        cortesiasDisplay.textContent = cortesiasGanhadas;
+
+        if (cortesiasGanhadas > 0) {
+            campoBuscaCortesia.style.display = 'block';
+        } else {
+            campoBuscaCortesia.style.display = 'none';
+        }
+        
+        // Coloque o resto da sua lógica de cálculo de total e troco aqui
+        const totalPagarDisplay = document.getElementById('totalPagarCalculado');
+        const totalAPagar = vendidas * VALOR_CARTELA;
+        totalPagarDisplay.textContent = formatCurrency(totalAPagar);
+        
+        const valorRecebidoInput = document.getElementById('valorRecebido');
+        const tipoPagamentoSelect = document.getElementById('tipoPagamento');
+        const trocoAlert = document.getElementById('trocoAlert');
+        const trocoValue = document.getElementById('trocoValue');
+        let valorRecebidoStr = (valorRecebidoInput.value || '0').replace('.', '').replace(',', '.');
+        let valorRecebido = parseFloat(valorRecebidoStr) || 0;
+
+        if (tipoPagamentoSelect.value === 'DINHEIRO' && valorRecebido > totalAPagar) {
+            const troco = valorRecebido - totalAPagar;
+            trocoValue.textContent = formatCurrency(troco);
+            trocoAlert.style.display = 'block';
+        } else {
+            trocoAlert.style.display = 'none';
+        }
+    }
+
+    // --- O Event Listener Principal ---
+    movimentoSelect.addEventListener('change', function() {
+        if (this.value) {
+            camposAcerto.style.display = 'block';
+
+            // --- AGORA SIM, ADICIONAMOS OS LISTENERS DOS CAMPOS INTERNOS ---
+            // Eles só são adicionados UMA VEZ quando o formulário aparece.
+            if (!camposAcerto.dataset.listenersAttached) {
+                const buscaInput = document.getElementById('buscaCartelaCortesiaInput');
+                const addBtn = document.getElementById('addCortesiaBtn');
+                
+                addBtn.addEventListener('click', adicionarCartelaCortesia);
+                buscaInput.addEventListener('keypress', function(e) {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        adicionarCartelaCortesia();
+                    }
+                });
+
+                // Adiciona listeners para os outros campos
+                const inputsParaCalcular = ['qtdVendidas', 'qtdDevolvidas', 'valorRecebido', 'tipoPagamento'];
+                inputsParaCalcular.forEach(id => {
+                    document.getElementById(id).addEventListener('input', calcularAcerto);
+                });
+
+                // Marca que os listeners foram adicionados para não adicionar de novo
+                camposAcerto.dataset.listenersAttached = 'true';
+            }
+
+            // Limpa os campos para um novo acerto
+            ['qtdVendidas', 'valorRecebido', 'membroPastoral', 'observacoes'].forEach(id => document.getElementById(id).value = '');
+            document.getElementById('qtdDevolvidas').value = '0';
+            cartelasCortesiaSelecionadas = [];
+            renderizarCortesiasSelecionadas();
+            calcularAcerto(); // Chama para inicializar os cálculos
+        } else {
+            camposAcerto.style.display = 'none';
+        }
+    });
+
+    // Listener de validação final no formulário
+    form.addEventListener('submit', function(e) {
+        // A lógica de validação que você já tinha...
+        const qtdVendidasInput = document.getElementById('qtdVendidas');
+        const vendidas = parseInt(qtdVendidasInput.value) || 0;
+        const cortesiasGanhadas = Math.floor(vendidas / 10);
+        if (cartelasCortesiaSelecionadas.length > cortesiasGanhadas) {
+            e.preventDefault();
+            alert(`Ação bloqueada: Você ganhou ${cortesiasGanhadas} cortesia(s), mas selecionou ${cartelasCortesiaSelecionadas.length}. Remova o excesso.`);
+        }
+    });
+});
+</script>
+{% endblock %}

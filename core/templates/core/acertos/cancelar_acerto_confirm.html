@@ -1,0 +1,36 @@
+{% extends 'base.html' %}
+
+{% block title %}Confirmar Cancelamento{% endblock %}
+
+{% block content %}
+<div class="container mt-4" style="max-width: 600px;">
+    <div class="card border-danger">
+        <div class="card-header bg-danger text-white">
+            <h4 class="mb-0">Confirmar Cancelamento de Acerto</h4>
+        </div>
+        <div class="card-body">
+            <p class="fs-5">Você tem certeza que deseja cancelar o seguinte acerto?</p>
+            
+            <ul class="list-group mb-4">
+                <li class="list-group-item"><strong>Movimento:</strong> {{ acerto.movimento.nome }}</li>
+                <li class="list-group-item"><strong>Responsável:</strong> {{ acerto.membro_pastoral }}</li>
+                <li class="list-group-item"><strong>Data:</strong> {{ acerto.data|date:"d/m/Y" }}</li>
+                <li class="list-group-item"><strong>Valor:</strong> R$ {{ acerto.valor_total|stringformat:".2f" }}</li>
+            </ul>
+
+            <div class="alert alert-warning" role="alert">
+                <i class="bi bi-exclamation-triangle-fill"></i>
+                <strong>Atenção:</strong> Esta ação não pode ser desfeita. Todas as cartelas associadas a este acerto (vendidas, devolvidas e cortesia) terão seu status revertido para "Distribuída".
+            </div>
+
+            <form method="post">
+                {% csrf_token %}
+                <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                    <a href="{% url 'lista_acertos' %}" class="btn btn-secondary">Não, voltar</a>
+                    <button type="submit" class="btn btn-danger">Sim, desejo cancelar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

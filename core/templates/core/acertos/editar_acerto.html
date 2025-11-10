@@ -1,0 +1,23 @@
+{% extends 'base.html' %}
+
+{% block title %}Editar Acerto{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>Editar Acerto do Movimento: <span class="text-primary">{{ acerto.movimento.nome }}</span></h2>
+    <p class="text-muted">Realizado em: {{ acerto.data|date:"d/m/Y" }}</p>
+    <hr>
+
+    <form method="post" novalidate>
+        {% csrf_token %}
+
+        {{ form.as_p }}
+
+        <hr>
+        <div class="mt-3">
+            <button type="submit" class="btn btn-primary">Salvar Alterações</button>
+            <a href="{% url 'lista_acertos' %}" class="btn btn-secondary">Cancelar</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

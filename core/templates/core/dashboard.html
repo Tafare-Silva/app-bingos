@@ -1,0 +1,129 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2"><i class="bi bi-speedometer2"></i> Dashboard</h1>
+</div>
+
+<!-- Cards de Resumo com a Lógica e Nomes Corretos -->
+<div class="row row-cols-1 row-cols-sm-2 row-cols-md-3 row-cols-lg-4 g-4 mb-4">
+    <div class="col">
+        <div class="card h-100 card-counter bg-dark text-white">
+            <div class="card-body text-center">
+                <h5 class="card-title"><i class="bi bi-stack"></i> Cadastradas</h5>
+                <h3>{{ total_cadastradas|default:0 }}</h3> {# Usar default:0 para evitar "None" #}
+            </div>
+        </div>
+    </div>
+    <div class="col">
+        <div class="card h-100 card-counter bg-primary text-white">
+            <div class="card-body text-center">
+                <h5 class="card-title"><i class="bi bi-truck"></i> Distribuídas (Geral)</h5>
+                <h3>{{ total_distribuido_geral|default:0 }}</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col">
+        <div class="card h-100 card-counter bg-success text-white">
+            <div class="card-body text-center">
+                <h5 class="card-title"><i class="bi bi-cash-coin"></i> Vendidas (Geral)</h5>
+                <h3>{{ total_acertadas_vendidas|default:0 }}</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col">
+        <div class="card h-100 card-counter bg-warning text-dark">
+            <div class="card-body text-center">
+                <h5 class="card-title"><i class="bi bi-hourglass-split"></i> Pendentes (Geral)</h5>
+                <h3>{{ total_pendente_acerto|default:0 }}</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col">
+        <div class="card h-100 card-counter bg-info text-dark">
+            <div class="card-body text-center">
+                <h5 class="card-title"><i class="bi bi-box-seam"></i> Disponíveis</h5>
+                <h3>{{ total_disponivel_estoque|default:0 }}</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col">
+        <div class="card h-100 card-counter bg-secondary text-white">
+            <div class="card-body text-center">
+                <h5 class="card-title"><i class="bi bi-arrow-return-left"></i> Devolvidas (Geral)</h5>
+                <h3>{{ total_devolvidas|default:0 }}</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col">
+        <div class="card h-100 card-counter bg-light text-dark"> <!-- Cor diferente para cortesia -->
+            <div class="card-body text-center">
+                <h5 class="card-title"><i class="bi bi-gift"></i> Cortesias (Geral)</h5>
+                <h3>{{ total_cortesias|default:0 }}</h3>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Filtros -->
+<div class="row mb-4">
+    <div class="col-md-6">
+        <form method="get" class="input-group">
+            <input type="text" name="q" value="{{ query }}" class="form-control" placeholder="Buscar pastoral/movimento...">
+            <button class="btn btn-outline-primary" type="submit"><i class="bi bi-search"></i> Buscar</button>
+            {% if query %}
+                <a href="{% url 'dashboard' %}" class="btn btn-outline-danger"><i class="bi bi-x"></i> Limpar</a>
+            {% endif %}
+        </form>
+    </div>
+</div>
+
+<!-- Tabela de Movimentos com a Lógica e Ênfase Corretas -->
+<div class="card shadow">
+    <div class="card-header bg-dark text-white">
+        <i class="bi bi-people-fill"></i> Controle por Movimento
+    </div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th scope="col">Movimento</th>
+                        <th scope="col" class="text-center">Distribuídas (Venda)</th>
+                        <th scope="col" class="text-center">Vendidas</th>
+                        <th scope="col" class="text-center">Devolvidas</th>
+                        <th scope="col" class="text-center">Pendentes</th>
+                        <th scope="col" class="text-center">Cortesias</th>
+                        <th scope="col" class="text-center">Ações</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for movimento in movimentos %}
+                <tr>
+                    <td><strong>{{ movimento.nome }}</strong></td>
+                    <td class="text-center fw-bold">{{ movimento.cartelas_distribuidas_venda|default:0 }}</td>
+                    <td class="text-center">
+                        <span class="badge bg-success">{{ movimento.cartelas_vendidas|default:0 }}</span>
+                    </td>
+                    <td class="text-center text-secondary">{{ movimento.cartelas_devolvidas|default:0 }}</td>
+                    <td class="text-center">
+                        <span class="badge bg-warning text-dark">{{ movimento.cartelas_pendentes|default:0 }}</span>
+                    </td>
+                    <td class="text-center text-info">{{ movimento.cartelas_cortesia|default:0 }}</td>
+                    <td class="text-center">
+                        <a href="{% url 'historico_movimento' movimento.id %}" class="btn btn-sm btn-outline-primary" title="Ver Detalhes">
+                            <i class="bi bi-eye"></i>
+                        </a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="7" class="text-center">Nenhum movimento encontrado.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

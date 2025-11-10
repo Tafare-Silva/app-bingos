@@ -1,0 +1,253 @@
+{% extends 'base.html' %}
+
+{% block title %}Distribuir Cartelas{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h2>Distribuir Cartelas</h2>
+                <a href="{% url 'dashboard' %}" class="btn btn-secondary">
+                    <i class="bi bi-arrow-left"></i> Voltar
+                </a>
+            </div>
+
+            {% if messages %}
+                {% for message in messages %}
+                    <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+
+            <div class="card">
+                <div class="card-body">
+                    <form method="post" id="formDistribuir">
+                        {% csrf_token %}
+                        
+                        <div class="mb-3">
+                            <label for="movimento" class="form-label">Movimento/Pastoral *</label>
+                            <select class="form-select" id="movimento" name="movimento" required>
+                                <option value="">Selecione...</option>
+                                {% for mov in movimentos %}
+                                    <option value="{{ mov.id }}">{{ mov.nome }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="membro_responsavel" class="form-label">Membro Responsável (Opcional)</label>
+                            <input type="text" class="form-control" name="membro_responsavel" id="membro_responsavel" placeholder="Nome de quem está retirando as cartelas">
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Método de Distribuição *</label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="metodo_distribuicao" 
+                                       id="metodo_sequencia" value="sequencia" checked>
+                                <label class="form-check-label" for="metodo_sequencia">
+                                    Por Sequência (ex: 0001 a 0050)
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="metodo_distribuicao" 
+                                       id="metodo_quantidade" value="quantidade">
+                                <label class="form-check-label" for="metodo_quantidade">
+                                    Por Quantidade (ex: 50 cartelas)
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Campos para distribuição por sequência -->
+                        <div id="campos_sequencia">
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label for="numero_inicial" class="form-label">Número Inicial *</label>
+                                    <input type="number" class="form-control" id="numero_inicial" 
+                                           name="numero_inicial" min="1">
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label for="numero_final" class="form-label">Número Final *</label>
+                                    <input type="number" class="form-control" id="numero_final" 
+                                           name="numero_final" min="1">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Campo para distribuição por quantidade -->
+                        <div id="campos_quantidade" style="display: none;">
+                            <div class="mb-3">
+                                <label for="quantidade" class="form-label">Quantidade de Cartelas *</label>
+                                <input type="number" class="form-control" id="quantidade" 
+                                       name="quantidade" min="1">
+                            </div>
+                        </div>
+
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle"></i>
+                            <strong>Cartelas Disponíveis:</strong> {{ cartelas_disponiveis }}
+                        </div>
+
+                        <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                            <button type="button" class="btn btn-primary" id="btnDistribuir">
+                                <i class="bi bi-check-circle"></i> Distribuir
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Últimas Distribuições -->
+            {% if ultimas_distribuidas %}
+            <div class="card mt-4">
+                <div class="card-header">
+                    <h5 class="mb-0">Últimas Distribuições</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Data</th>
+                                    <th>Movimento</th>
+                                    <th>Quantidade</th>
+                                    <th>Faixa</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for dist in ultimas_distribuidas %}
+                                <tr>
+                                    <td>{{ dist.data_distribuicao|date:"d/m/Y H:i" }}</td>
+                                    <td>{{ dist.movimento }}</td>
+                                    <td>{{ dist.quantidade }}</td>
+                                    <td>{{ dist.faixa }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Modal de Confirmação -->
+<div class="modal fade" id="confirmModal" tabindex="-1" aria-labelledby="confirmModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="confirmModalLabel">Confirmar Distribuição</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p id="confirmText"></p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary" id="btnConfirmar">Confirmar</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const metodoSequencia = document.getElementById('metodo_sequencia');
+    const metodoQuantidade = document.getElementById('metodo_quantidade');
+    const camposSequencia = document.getElementById('campos_sequencia');
+    const camposQuantidade = document.getElementById('campos_quantidade');
+    const numeroInicial = document.getElementById('numero_inicial');
+    const numeroFinal = document.getElementById('numero_final');
+    const quantidadeInput = document.getElementById('quantidade'); // Renomeado para evitar conflito
+    const movimentoSelect = document.getElementById('movimento'); // Renomeado
+    const btnDistribuir = document.getElementById('btnDistribuir');
+    const btnConfirmar = document.getElementById('btnConfirmar');
+    const formDistribuir = document.getElementById('formDistribuir');
+    const confirmText = document.getElementById('confirmText');
+    
+    // Inicialização do Modal (seu código estava correto)
+    const modalElement = document.getElementById('confirmModal');
+    const confirmModal = new bootstrap.Modal(modalElement);
+
+    function toggleFields() {
+        const isSequencia = metodoSequencia.checked;
+        camposSequencia.style.display = isSequencia ? 'block' : 'none';
+        camposQuantidade.style.display = isSequencia ? 'none' : 'block';
+        
+        numeroInicial.required = isSequencia;
+        numeroFinal.required = isSequencia;
+        quantidadeInput.required = !isSequencia;
+        
+        // Limpa os valores dos campos que não estão em uso
+        if (isSequencia) {
+            quantidadeInput.value = '';
+        } else {
+            numeroInicial.value = '';
+            numeroFinal.value = '';
+        }
+    }
+
+    metodoSequencia.addEventListener('change', toggleFields);
+    metodoQuantidade.addEventListener('change', toggleFields);
+    toggleFields(); // Estado inicial
+
+    btnDistribuir.addEventListener('click', function(e) {
+        e.preventDefault();
+        
+        if (!movimentoSelect.value) {
+            alert('Por favor, selecione um Movimento/Pastoral.');
+            movimentoSelect.focus();
+            return;
+        }
+
+        let mensagem = '';
+        const movimentoNome = movimentoSelect.options[movimentoSelect.selectedIndex].text;
+        const isSequencia = metodoSequencia.checked;
+
+        if (isSequencia) {
+            if (!numeroInicial.value || !numeroFinal.value) {
+                alert('Por favor, preencha os números inicial e final.');
+                numeroInicial.focus();
+                return;
+            }
+            const inicial = parseInt(numeroInicial.value);
+            const final = parseInt(numeroFinal.value);
+            if (isNaN(inicial) || isNaN(final) || inicial <= 0 || final <= 0) {
+                 alert('Por favor, insira números de sequência válidos e maiores que zero.');
+                 numeroInicial.focus();
+                 return;
+            }
+            if (inicial > final) {
+                alert('O número inicial não pode ser maior que o final.');
+                numeroInicial.focus();
+                return;
+            }
+            const qtd = final - inicial + 1;
+            mensagem = `Confirma a distribuição de <strong>${qtd} cartelas</strong> (nº ${inicial} a ${final}) para <strong>${movimentoNome}</strong>?`;
+        
+        } else { // Quantidade
+            const qtd = parseInt(quantidadeInput.value);
+            if (isNaN(qtd) || qtd <= 0) {
+                alert('Por favor, informe uma quantidade válida e maior que zero.');
+                quantidadeInput.focus();
+                return;
+            }
+            mensagem = `Confirma a distribuição de <strong>${qtd} cartelas</strong> para <strong>${movimentoNome}</strong>?`;
+        }
+        
+        confirmText.innerHTML = mensagem;
+        confirmModal.show();
+    });
+
+    btnConfirmar.addEventListener('click', function() {
+        // Apenas esconde o modal e submete o formulário. A view faz o resto.
+        confirmModal.hide();
+        formDistribuir.submit();
+    });
+});
+</script>
+{% endblock %}
+

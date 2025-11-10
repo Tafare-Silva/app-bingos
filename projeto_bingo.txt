@@ -1,0 +1,1263 @@
+Projeto controle de cartelas de bingo:
+
+MODELS:
+
+projeto_bingo/core/models.py
+
+from django.db import models
+from django.utils import timezone
+
+class Movimento(models.Model):
+    nome = models.CharField(max_length=100)  # Ex: "Pastoral Familiar"
+    responsavel = models.CharField(max_length=100)
+    telefone = models.CharField(max_length=20, blank=True)
+
+    def __str__(self):
+        return self.nome
+
+class Cartela(models.Model):
+    STATUS_CHOICES = [
+        ('DISPONIVEL', 'Disponível na coordenação'),
+        ('DISTRIBUIDA', 'Distribuída para movimento'),
+        ('VENDIDA', 'Vendida (aguardando acerto)'),
+        ('ACERTADA', 'Acertada (pagamento confirmado)'),
+    ]
+    numero = models.CharField(max_length=6, unique=True)  # Ex: "0001"
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default='DISPONIVEL')
+    movimento = models.ForeignKey(Movimento, on_delete=models.SET_NULL, null=True, blank=True)
+    data_distribuicao = models.DateField(null=True, blank=True)
+    data_acerto = models.DateField(null=True, blank=True)
+    cortesia = models.BooleanField(default=False)
+    devolvida = models.BooleanField(default=False)
+
+    def __str__(self):
+        return f"Cartela {self.numero} ({self.status})"
+    
+class Acerto(models.Model):
+    TIPO_PAGAMENTO = [
+        ('DINHEIRO', 'Dinheiro'),
+        ('PIX', 'PIX'),
+        ('CARTAO_CREDITO', 'Cartão de Crédito'),
+        ('CARTAO_DEBITO', 'Cartão de Débito'),
+        ('PREFEITURA', 'Prefeitura'),
+        ('DESCONTO_SERVICO', 'Desconto em Serviços'),
+    ]
+    
+    movimento = models.ForeignKey(Movimento, on_delete=models.PROTECT)
+    data = models.DateTimeField(auto_now_add=True)
+    valor_total = models.DecimalField(max_digits=10, decimal_places=2)
+    valor_recebido = models.DecimalField(max_digits=10, decimal_places=2)
+    tipo_pagamento = models.CharField(max_length=17, choices=TIPO_PAGAMENTO)  # Ajustado
+    cartelas_vendidas = models.ManyToManyField(Cartela, related_name='acertos_vendidas')
+    cartelas_devolvidas = models.ManyToManyField(Cartela, related_name='acertos_devolvidas')
+    cartelas_cortesia = models.ManyToManyField(Cartela, related_name='acertos_cortesia')
+    membro_pastoral = models.CharField(max_length=100, blank=True, default='')  # Opcional
+    obs = models.TextField(max_length=200, blank=True, default='')  # Opcional
+
+    def __str__(self):
+        return f"Acerto #{self.id} - {self.movimento.nome}"
+
+    @property
+    def troco(self):
+        return self.valor_recebido - self.valor_total if self.valor_recebido > self.valor_total else 0
+
+#######################################################################################################################
+
+VIEWS
+
+projeto_bingo/core/views.py
+
+from django.shortcuts import render, redirect
+from .models import Cartela, Movimento, Acerto
+from django.utils import timezone
+from django.contrib import messages
+from django.shortcuts import get_object_or_404
+from .forms import MovimentoForm
+from django.core.paginator import Paginator
+from django.db.models import Q
+from datetime import datetime
+from decimal import Decimal
+from django.db.models import Count, Q
+
+def dashboard(request):
+    # Recebe o parâmetro de busca (se existir)
+    query = request.GET.get('q', '')
+    
+    # Filtra os movimentos se houver busca
+    movimentos_queryset = Movimento.objects.all()
+    if query:
+        movimentos_queryset = movimentos_queryset.filter(nome__icontains=query)
+    
+    # Calcula os totais para cada movimento (como antes)
+    movimentos_com_totais = []
+    for movimento in movimentos_queryset:  # Usa o queryset filtrado
+        total_distribuidas = Cartela.objects.filter(
+            movimento=movimento, 
+            status__in=['DISTRIBUIDA', 'VENDIDA', 'ACERTADA']
+        ).count()
+        
+        total_acertadas = Cartela.objects.filter(
+            movimento=movimento, 
+            status='ACERTADA'
+        ).count()
+        
+        movimentos_com_totais.append({
+            'nome': movimento.nome,
+            'total_distribuidas': total_distribuidas,
+            'total_acertadas': total_acertadas,
+            'total_pendentes': total_distribuidas - total_acertadas
+        })
+    
+    # Contexto atualizado com a query
+    context = {
+        'total_cartelas': Cartela.objects.count(),
+        'cartelas_acertadas': Cartela.objects.filter(status='ACERTADA').count(),
+        'cartelas_pendentes': Cartela.objects.filter(status='VENDIDA').count(),
+        'movimentos': movimentos_com_totais,
+        'query': query  # Adiciona a query para mostrar no template
+    }
+    return render(request, 'core/dashboard.html', context)
+
+def distribuir_cartelas(request):
+    if request.method == 'POST':
+        movimento_id = request.POST.get('movimento')
+        quantidade = int(request.POST.get('quantidade', 0))
+        
+        movimento = Movimento.objects.get(id=movimento_id)
+        cartelas_disponiveis = Cartela.objects.filter(
+            status='DISPONIVEL'
+        ).order_by('numero')[:quantidade]
+        
+        if cartelas_disponiveis.count() < quantidade:
+            messages.error(request, f"Só há {cartelas_disponiveis.count()} cartelas disponíveis!")
+            return redirect('distribuir_cartelas')
+        
+        cartelas_disponiveis.update(
+            status='DISTRIBUIDA',
+            movimento=movimento,
+            data_distribuicao=timezone.now()
+        )
+        
+        messages.success(request, f"{quantidade} cartelas distribuídas para {movimento.nome}")
+        return redirect('distribuir_cartelas')
+    
+    movimentos = Movimento.objects.all()
+    return render(request, 'core/distribuir_cartelas.html', {
+        'movimentos': movimentos,
+        'total_disponivel': Cartela.objects.filter(status='DISPONIVEL').count()
+    })
+
+def cadastrar_cartelas(request):
+    if request.method == 'POST':
+        inicio = int(request.POST.get('inicio', 1))
+        fim = int(request.POST.get('fim', 1))
+        
+        # Validação básica
+        if fim < inicio:
+            messages.error(request, "O número final deve ser maior que o inicial!")
+            return redirect('cadastrar_cartelas')
+        
+        # Verifica se há conflitos
+        if Cartela.objects.filter(numero__gte=f"{inicio:04d}", numero__lte=f"{fim:04d}").exists():
+            messages.error(request, "Algumas cartelas deste intervalo já existem!")
+            return redirect('cadastrar_cartelas')
+        
+        # Cria as cartelas
+        cartelas = [
+            Cartela(numero=f"{i:04d}", status="DISPONIVEL")
+            for i in range(inicio, fim + 1)
+        ]
+        Cartela.objects.bulk_create(cartelas)
+        messages.success(request, f"{len(cartelas)} cartelas cadastradas (de {inicio:04d} a {fim:04d})!")
+        return redirect('dashboard')
+    
+    return render(request, 'core/cadastrar_cartelas.html')
+
+def listar_cartelas(request):
+    query = request.GET.get('q', '')
+    status = request.GET.get('status', '')
+    data = request.GET.get('date', '')
+    
+    cartelas = Cartela.objects.all()
+    
+    if query:
+        cartelas = cartelas.filter(
+            Q(numero__icontains=query) |
+            Q(movimento__nome__icontains=query)
+        )
+    
+    if status:
+        cartelas = cartelas.filter(status=status)
+        
+    if data:
+        try:
+            data_obj = datetime.strptime(data, '%Y-%m-%d').date()
+            cartelas = cartelas.filter(data_distribuicao__date=data_obj)
+        except ValueError:
+            pass
+    
+    context = {
+        'cartelas': cartelas,
+        'filter_status': status,
+        'filter_date': data,
+        'search_query': query
+    }
+    return render(request, 'core/cartelas/listar.html', context)
+
+def listar_movimentos(request):
+    query = request.GET.get('q', '')
+    status_filter = request.GET.get('status', '')
+    date_filter = request.GET.get('date', '')
+    
+    movimentos_list = Movimento.objects.all().order_by('nome')
+    
+    # Aplicar filtros
+    if query:
+        movimentos_list = movimentos_list.filter(nome__icontains=query)
+    
+    # Paginação
+    paginator = Paginator(movimentos_list, 10)
+    page_number = request.GET.get('page')
+    page_obj = paginator.get_page(page_number)
+    
+    return render(request, 'core/movimentos/listar.html', {
+        'movimentos': page_obj.object_list,
+        'page_obj': page_obj,
+        'search_query': query,
+        'filter_status': status_filter,
+        'filter_date': date_filter
+    })
+
+
+def criar_movimento(request):
+    if request.method == 'POST':
+        form = MovimentoForm(request.POST)
+        if form.is_valid():
+            movimento = form.save()
+            messages.success(request, f'Movimento "{movimento.nome}" criado com sucesso!')
+            return redirect('listar_movimentos')
+    else:
+        form = MovimentoForm()
+    
+    return render(request, 'core/movimentos/form.html', {
+        'form': form,
+        'titulo': 'Novo Movimento'
+    })
+
+def editar_movimento(request, pk):
+    movimento = get_object_or_404(Movimento, pk=pk)
+    if request.method == 'POST':
+        form = MovimentoForm(request.POST, instance=movimento)
+        if form.is_valid():
+            form.save()
+            messages.success(request, f'Movimento "{movimento.nome}" atualizado!')
+            return redirect('listar_movimentos')
+    else:
+        form = MovimentoForm(instance=movimento)
+    
+    return render(request, 'core/movimentos/form.html', {
+        'form': form,
+        'titulo': f'Editar {movimento.nome}'
+    })
+
+def excluir_movimento(request, pk):
+    movimento = get_object_or_404(Movimento, pk=pk)
+    if request.method == 'POST':
+        nome = movimento.nome
+        movimento.delete()
+        messages.success(request, f'Movimento "{nome}" excluído!')
+        return redirect('listar_movimentos')
+    
+    return render(request, 'core/movimentos/confirmar_exclusao.html', {
+        'movimento': movimento
+    })
+
+def registrar_acerto(request):
+    if request.method == 'POST':
+        movimento_id = request.POST.get('movimento')
+        qtd_vendidas = int(request.POST.get('qtd_vendidas', 0))
+        qtd_devolvidas = int(request.POST.get('qtd_devolvidas', 0))
+        valor_unitario = Decimal('10.00')  # Exemplo
+        
+        movimento = Movimento.objects.get(id=movimento_id)
+        cartelas = Cartela.objects.filter(
+            movimento=movimento,
+            status='DISTRIBUIDA'
+        ).order_by('numero')[:qtd_vendidas + qtd_devolvidas]
+        
+        # Cálculos automáticos
+        cortesias = qtd_vendidas // 10
+        total = qtd_vendidas * valor_unitario
+        
+        # Cria o acerto
+        acerto = Acerto.objects.create(
+            movimento=movimento,
+            valor_total=total,
+            valor_recebido=request.POST.get('valor_recebido'),
+            tipo_pagamento=request.POST.get('tipo_pagamento')
+        )
+        
+        # Atualiza cartelas
+        for i, cartela in enumerate(cartelas):
+            if i < qtd_vendidas:
+                cartela.status = 'ACERTADA'
+                acerto.cartelas_vendidas.add(cartela)
+                if i < cortesias:
+                    cartela.cortesia = True
+            else:
+                cartela.status = 'DISPONIVEL'
+                cartela.devolvida = True
+                acerto.cartelas_devolvidas.add(cartela)
+            cartela.save()
+        
+        return redirect('relatorio_acerto', pk=acerto.pk)
+    
+    movimentos = Movimento.objects.annotate(
+        cartelas_pendentes=Count('cartela', filter=Q(cartela__status='DISTRIBUIDA'))
+    ).filter(cartelas_pendentes__gt=0)
+    
+    return render(request, 'core/acertos/registrar.html', {'movimentos': movimentos})
+
+def relatorio_acerto(request, pk):
+    acerto = get_object_or_404(Acerto, pk=pk)
+    return render(request, 'core/acertos/relatorio.html', {'acerto': acerto})
+
+########################################################################################################################
+
+FORMS
+
+projeto_bingo/core/forms.py
+
+from django import forms
+from .models import Movimento
+from django.core.validators import RegexValidator
+
+class MovimentoForm(forms.ModelForm):
+    class Meta:
+        model = Movimento
+        fields = ['nome', 'responsavel', 'telefone']
+        widgets = {
+            'telefone': forms.TextInput(attrs={
+                'class': 'form-control',
+                'placeholder': '(99) 99999-9999',
+                'data-mask': '(00) 00000-0000'  # Para plugins de máscara
+            }),
+            'nome': forms.TextInput(attrs={'class': 'form-control'}),
+            'responsavel': forms.TextInput(attrs={'class': 'form-control'}),
+        }
+
+    def clean_telefone(self):
+        telefone = self.cleaned_data['telefone']
+        # Remove caracteres não numéricos
+        return ''.join(filter(str.isdigit, telefone))
+
+########################################################################################################################
+
+TEMPLATES:
+
+projeto_bingo/core/templates/base.html
+
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Bingo Paroquial</title>
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Ícones Bootstrap -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <style>
+        /* Layout principal */
+        .sidebar {
+            min-height: 100vh;
+            background: #343a40;
+        }
+        
+        /* Ajustes para mobile */
+        @media (max-width: 767.98px) {
+            main {
+                padding-bottom: 80px;
+            }
+            .offcanvas {
+                width: 75%;
+            }
+        }
+        
+        /* Cards do dashboard */
+        .card-counter {
+            box-shadow: 2px 2px 10px #DADADA;
+            transition: .3s;
+        }
+        .card-counter:hover {
+            box-shadow: 5px 5px 15px #DADADA;
+        }
+    </style>
+</head>
+<body>
+    <!-- Menu Superior Mobile -->
+    <div class="d-md-none sticky-top bg-dark text-white p-2">
+        <div class="d-flex justify-content-between align-items-center">
+            <span class="fs-5">
+                <i class="bi bi-heart-fill"></i> Bingo
+            </span>
+            <button class="btn btn-dark" type="button" data-bs-toggle="offcanvas" data-bs-target="#mobileMenu">
+                <i class="bi bi-list"></i>
+            </button>
+        </div>
+    </div>
+
+    <div class="container-fluid">
+        <div class="row">
+            <!-- Sidebar Desktop -->
+            <div class="col-md-3 col-lg-2 d-none d-md-block sidebar text-white p-3">
+                <h4 class="text-center mb-4">
+                     Bingo Paroquia Sao Sebastiao
+                </h4>
+                <ul class="nav flex-column">
+                    <li class="nav-item">
+                        <a class="nav-link text-white" href="{% url 'dashboard' %}">
+                            <i class="bi bi-speedometer2"></i> Dashboard
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link text-white" href="{% url 'cadastrar_cartelas' %}">
+                            <i class="bi bi-plus-square"></i> Cartelas
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link text-white" href="{% url 'distribuir' %}">
+                            <i class="bi bi-share"></i> Distribuir
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link text-white" href="{% url 'listar_movimentos' %}">
+                            <i class="bi bi-people-fill"></i> Pastorais/Mov.
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link text-white" href="{% url 'registrar_acerto' %}">
+                            <i class="bi bi-cash-coin"></i> Acertos
+                        </a>
+                    </li>
+                </ul>
+            </div>
+
+            <!-- Conteúdo Principal -->
+            <main class="col-md-9 ms-sm-auto col-lg-10 px-md-4 py-4">
+                {% block content %}{% endblock %}
+            </main>
+        </div>
+    </div>
+
+    <!-- Menu Offcanvas Mobile -->
+    <div class="offcanvas offcanvas-end d-md-none" tabindex="-1" id="mobileMenu">
+        <div class="offcanvas-header bg-dark text-white">
+            <h5 class="offcanvas-title">Menu</h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas"></button>
+        </div>
+        <div class="offcanvas-body bg-dark">
+            <ul class="nav flex-column">
+                <li class="nav-item">
+                    <a class="nav-link text-white" href="{% url 'dashboard' %}">
+                        <i class="bi bi-speedometer2"></i> Dashboard
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link text-white" href="{% url 'cadastrar_cartelas' %}">
+                        <i class="bi bi-plus-square"></i> Cartelas
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link text-white" href="{% url 'distribuir' %}">
+                        <i class="bi bi-share"></i> Distribuir
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link text-white" href="{% url 'listar_movimentos' %}">
+                        <i class="bi bi-people-fill"></i> Movimentos
+                    </a>
+                </li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- Menu Inferior Mobile -->
+    <div class="d-md-none fixed-bottom bg-dark text-white p-2">
+        <div class="d-flex justify-content-around">
+            <a href="{% url 'dashboard' %}" class="text-white mx-2 text-center">
+                <i class="bi bi-speedometer2 fs-4"></i>
+                <div class="small">Dashboard</div>
+            </a>
+            <a href="{% url 'cadastrar_cartelas' %}" class="text-white mx-2 text-center">
+                <i class="bi bi-plus-square fs-4"></i>
+                <div class="small">Cartelas</div>
+            </a>
+            <a href="{% url 'distribuir' %}" class="text-white mx-2 text-center">
+                <i class="bi bi-share fs-4"></i>
+                <div class="small">Distribuir</div>
+            </a>
+            <a href="{% url 'listar_movimentos' %}" class="text-white mx-2 text-center">
+                <i class="bi bi-people fs-4"></i>
+                <div class="small">Movimentos</div>
+            </a>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.mask/1.14.16/jquery.mask.min.js"></script>
+
+<script>
+    $(document).ready(function(){
+        // Aplica máscara para telefone
+        $('[data-mask]').each(function(){
+            $(this).mask($(this).data('mask'));
+        });
+        
+        // Opcional: Formatação automática enquanto digita
+        $('#id_telefone').keyup(function(){
+            var value = $(this).val().replace(/\D/g, '');
+            if (value.length > 10) {
+                $(this).val('(' + value.substring(0, 2) + ') ' + value.substring(2, 7) + '-' + value.substring(7, 11));
+            } else if (value.length > 6) {
+                $(this).val('(' + value.substring(0, 2) + ') ' + value.substring(2, 6) + '-' + value.substring(6, 10));
+            } else if (value.length > 2) {
+                $(this).val('(' + value.substring(0, 2) + ') ' + value.substring(2, 6));
+            } else if (value.length > 0) {
+                $(this).val('(' + value);
+            }
+        });
+    });
+    </script>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
+
+#########################################################################################################################
+
+projeto_bingo/core/templates/core/cadastrar_cartelas.html
+
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">
+        <i class="bi bi-plus-square"></i> Cadastrar Cartelas
+    </h1>
+</div>
+
+<div class="card shadow">
+    <div class="card-body">
+        {% if messages %}
+            {% for message in messages %}
+            <div class="alert alert-{% if message.tags == 'error' %}danger{% else %}success{% endif %} alert-dismissible fade show">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+            {% endfor %}
+        {% endif %}
+
+        <form method="post" class="row g-3">
+            {% csrf_token %}
+            <div class="col-md-6">
+                <label for="inicio" class="form-label">Número Inicial</label>
+                <input type="number" class="form-control" id="inicio" name="inicio" min="1" required>
+            </div>
+            <div class="col-md-6">
+                <label for="fim" class="form-label">Número Final</label>
+                <input type="number" class="form-control" id="fim" name="fim" min="1" required>
+            </div>
+            <div class="col-12">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-save"></i> Cadastrar Cartelas
+                </button>
+                <a href="{% url 'dashboard' %}" class="btn btn-outline-secondary">
+                    <i class="bi bi-arrow-left"></i> Voltar
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+########################################################################################################################
+
+projeto_bingo/core/templates/core/dashboard.html
+
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">
+        <i class="bi bi-speedometer2"></i> Dashboard
+    </h1>
+</div>
+
+<!-- Cards de Resumo -->
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="card card-counter bg-primary text-white">
+            <div class="card-body text-center">
+                <h5><i class="bi bi-collection"></i> Cartelas Totais</h5>
+                <h3>{{ total_cartelas }}</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card card-counter bg-success text-white">
+            <div class="card-body text-center">
+                <h5><i class="bi bi-check-circle"></i> Acertadas</h5>
+                <h3>{{ cartelas_acertadas }}</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card card-counter bg-warning text-dark">
+            <div class="card-body text-center">
+                <h5><i class="bi bi-exclamation-triangle"></i> Pendentes</h5>
+                <h3>{{ cartelas_pendentes }}</h3>
+            </div>
+        </div>
+    </div>
+</div>
+<!-- FIltros -->
+<!-- Adicione no início do conteúdo -->
+<div class="row mb-4">
+    <div class="col-md-6">
+        <form method="get" class="input-group">
+            <input 
+                type="text" 
+                name="q" 
+                value="{{ query }}" 
+                class="form-control" 
+                placeholder="Buscar pastoral/movimento..."
+            >
+            <button class="btn btn-outline-primary" type="submit">
+                <i class="bi bi-search"></i> Buscar
+            </button>
+            {% if query %}
+                <a href="{% url 'dashboard' %}" class="btn btn-outline-danger">
+                    <i class="bi bi-x"></i> Limpar
+                </a>
+            {% endif %}
+        </form>
+    </div>
+</div>
+<!-- Tabela de Movimentos -->
+<div class="card shadow">
+    <div class="card-header bg-dark text-white">
+        <i class="bi bi-people-fill"></i> Controle por Movimento
+    </div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Movimento</th>
+                        <th>Distribuídas</th>
+                        <th>Acertadas</th>
+                        <th>Pendentes</th>
+                        <th>Ações</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for movimento in movimentos %}
+                    <tr>
+                        <td>{{ movimento.nome }}</td>
+                        <td>{{ movimento.total_distribuidas }}</td>
+                        <td>{{ movimento.total_acertadas }}</td>
+                        <td>{{ movimento.total_pendentes }}</td>
+                        <td>
+                            <a href="#" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-pencil"></i>
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+######################################################################################################################
+
+
+projeto_bingo/core/templates/core/distribuir_cartelas.html
+
+{% extends 'base.html' %}
+
+{% block title %}Distribuir Cartelas{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h2>Distribuir Cartelas</h2>
+                <a href="{% url 'dashboard' %}" class="btn btn-secondary">
+                    <i class="bi bi-arrow-left"></i> Voltar
+                </a>
+            </div>
+
+            {% if messages %}
+                {% for message in messages %}
+                    <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+
+            <div class="card">
+                <div class="card-body">
+                    <form method="post" id="formDistribuir">
+                        {% csrf_token %}
+                        
+                        <div class="mb-3">
+                            <label for="movimento" class="form-label">Movimento/Pastoral *</label>
+                            <select class="form-select" id="movimento" name="movimento" required>
+                                <option value="">Selecione...</option>
+                                {% for mov in movimentos %}
+                                    <option value="{{ mov.id }}">{{ mov.nome }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Método de Distribuição *</label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="metodo_distribuicao" 
+                                       id="metodo_sequencia" value="sequencia" checked>
+                                <label class="form-check-label" for="metodo_sequencia">
+                                    Por Sequência (ex: 0001 a 0050)
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="metodo_distribuicao" 
+                                       id="metodo_quantidade" value="quantidade">
+                                <label class="form-check-label" for="metodo_quantidade">
+                                    Por Quantidade (ex: 50 cartelas)
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Campos para distribuição por sequência -->
+                        <div id="campos_sequencia">
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label for="numero_inicial" class="form-label">Número Inicial *</label>
+                                    <input type="number" class="form-control" id="numero_inicial" 
+                                           name="numero_inicial" min="1">
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label for="numero_final" class="form-label">Número Final *</label>
+                                    <input type="number" class="form-control" id="numero_final" 
+                                           name="numero_final" min="1">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Campo para distribuição por quantidade -->
+                        <div id="campos_quantidade" style="display: none;">
+                            <div class="mb-3">
+                                <label for="quantidade" class="form-label">Quantidade de Cartelas *</label>
+                                <input type="number" class="form-control" id="quantidade" 
+                                       name="quantidade" min="1">
+                            </div>
+                        </div>
+
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle"></i>
+                            <strong>Cartelas Disponíveis:</strong> {{ cartelas_disponiveis }}
+                        </div>
+
+                        <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                            <button type="button" class="btn btn-primary" id="btnDistribuir">
+                                <i class="bi bi-check-circle"></i> Distribuir
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Últimas Distribuições -->
+            {% if ultimas_distribuidas %}
+            <div class="card mt-4">
+                <div class="card-header">
+                    <h5 class="mb-0">Últimas Distribuições</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Data</th>
+                                    <th>Movimento</th>
+                                    <th>Quantidade</th>
+                                    <th>Faixa</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for dist in ultimas_distribuidas %}
+                                <tr>
+                                    <td>{{ dist.data_distribuicao|date:"d/m/Y H:i" }}</td>
+                                    <td>{{ dist.movimento }}</td>
+                                    <td>{{ dist.quantidade }}</td>
+                                    <td>{{ dist.faixa }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Modal de Confirmação -->
+<div class="modal fade" id="confirmModal" tabindex="-1" aria-labelledby="confirmModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="confirmModalLabel">Confirmar Distribuição</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p id="confirmText"></p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary" id="btnConfirmar">Confirmar</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+    const metodoSequencia = document.getElementById('metodo_sequencia');
+    const metodoQuantidade = document.getElementById('metodo_quantidade');
+    const camposSequencia = document.getElementById('campos_sequencia');
+    const camposQuantidade = document.getElementById('campos_quantidade');
+    const numeroInicial = document.getElementById('numero_inicial');
+    const numeroFinal = document.getElementById('numero_final');
+    const quantidade = document.getElementById('quantidade');
+    const movimento = document.getElementById('movimento');
+    const btnDistribuir = document.getElementById('btnDistribuir');
+    const btnConfirmar = document.getElementById('btnConfirmar');
+    const formDistribuir = document.getElementById('formDistribuir');
+    const confirmText = document.getElementById('confirmText');
+    
+    let confirmModal;
+    
+    // Inicializar modal do Bootstrap
+    const modalElement = document.getElementById('confirmModal');
+    if (modalElement) {
+        // Certifique-se de que 'bootstrap' está disponível globalmente (carregado via script tag)
+        confirmModal = new bootstrap.Modal(modalElement); 
+    }
+
+    // Função para alternar campos
+    function toggleFields() {
+        if (metodoSequencia.checked) {
+            camposSequencia.style.display = 'block';
+            camposQuantidade.style.display = 'none';
+            numeroInicial.required = true;
+            numeroFinal.required = true;
+            quantidade.required = false;
+            quantidade.value = '';
+        } else {
+            camposSequencia.style.display = 'none';
+            camposQuantidade.style.display = 'block';
+            numeroInicial.required = false;
+            numeroFinal.required = false;
+            quantidade.required = true;
+            numeroInicial.value = '';
+            numeroFinal.value = '';
+        }
+    }
+
+    // Event listeners para os radio buttons
+    metodoSequencia.addEventListener('change', toggleFields);
+    metodoQuantidade.addEventListener('change', toggleFields);
+
+    // Inicializar estado dos campos
+    toggleFields();
+
+    // Validação e exibição do modal
+    btnDistribuir.addEventListener('click', function(e) {
+        e.preventDefault();
+        
+        // Validar movimento
+        if (!movimento.value) {
+            alert('Por favor, selecione um Movimento/Pastoral');
+            movimento.focus();
+            return;
+        }
+
+        let mensagem = '';
+        const movimentoNome = movimento.options[movimento.selectedIndex].text;
+
+        if (metodoSequencia.checked) {
+            // Validação de sequência
+            if (!numeroInicial.value || !numeroFinal.value) { // Verifica se ambos estão preenchidos
+                alert('Por favor, preencha os números inicial e final');
+                numeroInicial.focus(); // Ou numeroFinal, dependendo do que estiver vazio
+                return;
+            }
+
+            const inicial = parseInt(numeroInicial.value);
+            const final = parseInt(numeroFinal.value);
+
+            if (inicial > final) {
+                alert('O número inicial não pode ser maior que o final');
+                numeroInicial.focus();
+                return;
+            }
+
+            // Você pode querer adicionar uma validação para verificar se são números válidos (opcional)
+            if (isNaN(inicial) || isNaN(final)) {
+                 alert('Por favor, insira números válidos para a sequência.');
+                 numeroInicial.focus();
+                 return;
+            }
+
+            const qtd = final - inicial + 1;
+            mensagem = `Confirma a distribuição de <strong>${qtd} cartelas</strong> (${inicial} a ${final}) para <strong>${movimentoNome}</strong>?`;
+            
+        } else { // metodoQuantidade.checked
+            // Validação de quantidade
+            if (!quantidade.value || parseInt(quantidade.value) <= 0 || isNaN(parseInt(quantidade.value))) {
+                alert('Por favor, informe uma quantidade válida');
+                quantidade.focus();
+                return;
+            }
+
+            mensagem = `Confirma a distribuição de <strong>${quantidade.value} cartelas</strong> para <strong>${movimentoNome}</strong>?`;
+        }
+
+        // Se chegou até aqui, a validação passou
+        confirmText.innerHTML = mensagem;
+        if (confirmModal) {
+            confirmModal.show();
+        } else {
+            // Caso o modal não tenha sido inicializado corretamente (improvável se o HTML estiver certo)
+            console.error('Modal do Bootstrap não foi inicializado.');
+            // Opcional: enviar o formulário diretamente se o modal for crucial
+            // formDistribuir.submit(); 
+        }
+    });
+
+    // Confirmar e enviar formulário
+    btnConfirmar.addEventListener('click', function() {
+        if (confirmModal) {
+            confirmModal.hide();
+        }
+        formDistribuir.submit();
+    });
+});
+
+</script>
+{% endblock %}
+
+
+
+########################################################################################################################
+
+projeto_bingo/core/templates/core/movimentos/confirmar_exclusao.html
+
+<!-- core/templates/core/movimentos/confirmar_exclusao.html -->
+{% extends 'base.html' %}
+{% block content %}
+<div class="card shadow">
+    <div class="card-header bg-danger text-white">
+        <i class="bi bi-exclamation-triangle"></i> Confirmar Exclusão
+    </div>
+    <div class="card-body">
+        <p>Tem certeza que deseja excluir o movimento <strong>{{ movimento.nome }}</strong>?</p>
+        <form method="post">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-danger">
+                <i class="bi bi-trash"></i> Confirmar Exclusão
+            </button>
+            <a href="{% url 'listar_movimentos' %}" class="btn btn-secondary">
+                <i class="bi bi-arrow-left"></i> Cancelar
+            </a>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+##########################################################################################################################
+
+projeto_bingo/core/templates/core/movimentos/form.html
+
+{% extends 'base.html' %}
+{% block content %}
+<div class="card shadow">
+    <div class="card-header bg-primary text-white">
+        <i class="bi bi-pencil-square"></i> {{ titulo }}
+    </div>
+    <div class="card-body">
+        <form method="post">
+            {% csrf_token %}
+            <div class="mb-3">
+                <label class="form-label">Nome</label>
+                {{ form.nome }}
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Responsável</label>
+                {{ form.responsavel }}
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Telefone</label>
+                {{ form.telefone }}
+                <small class="text-muted">Formato: (DD) XXXXX-XXXX</small>
+            </div>
+            <button type="submit" class="btn btn-primary">
+                <i class="bi bi-check-circle"></i> Salvar
+            </button>
+            <a href="{% url 'listar_movimentos' %}" class="btn btn-secondary">
+                <i class="bi bi-arrow-left"></i> Cancelar
+            </a>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+#########################################################################################################################
+
+projeto_bingo/core/templates/core/movimentos/listar.html
+
+{% extends 'base.html' %}
+{% block content %}
+<div class="d-flex justify-content-between mb-4">
+    <h2><i class="bi bi-people"></i> Movimentos/Pastorais</h2>
+    <a href="{% url 'criar_movimento' %}" class="btn btn-primary">
+        <i class="bi bi-plus"></i> Novo
+    </a>
+</div>
+
+<!-- Filtros -->
+<form method="get" class="row g-3 mb-4">
+    <div class="col-md-6">
+        <input type="text" name="q" class="form-control" 
+               placeholder="Buscar por nome..." value="{{ search_query }}">
+    </div>
+    <div class="col-md-2">
+        <button type="submit" class="btn btn-primary w-100">
+            <i class="bi bi-search"></i> Buscar
+        </button>
+    </div>
+</form>
+
+<!-- Tabela -->
+<div class="table-responsive">
+    <table class="table table-hover">
+        <thead>
+            <tr>
+                <th>Nome</th>
+                <th>Responsável</th>
+                <th>Telefone</th>
+                <th>Ações</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for movimento in movimentos %}
+            <tr>
+                <td>{{ movimento.nome }}</td>
+                <td>{{ movimento.responsavel }}</td>
+                <td>{{ movimento.telefone }}</td>
+                <td>
+                    <a href="{% url 'editar_movimento' movimento.pk %}" 
+                       class="btn btn-sm btn-outline-primary">
+                        <i class="bi bi-pencil"></i>
+                    </a>
+                    <a href="{% url 'excluir_movimento' movimento.pk %}" 
+                       class="btn btn-sm btn-outline-danger">
+                        <i class="bi bi-trash"></i>
+                    </a>
+                </td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="4" class="text-center">Nenhum movimento encontrado</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Paginação -->
+{% if page_obj.paginator.num_pages > 1 %}
+<nav aria-label="Navegação">
+    <ul class="pagination justify-content-center">
+        {% if page_obj.has_previous %}
+        <li class="page-item">
+            <a class="page-link" href="?page=1{% if search_query %}&q={{ search_query }}{% endif %}">
+                &laquo; Primeira
+            </a>
+        </li>
+        <li class="page-item">
+            <a class="page-link" 
+               href="?page={{ page_obj.previous_page_number }}{% if search_query %}&q={{ search_query }}{% endif %}">
+                Anterior
+            </a>
+        </li>
+        {% endif %}
+        
+        <li class="page-item disabled">
+            <span class="page-link">
+                Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}
+            </span>
+        </li>
+        
+        {% if page_obj.has_next %}
+        <li class="page-item">
+            <a class="page-link" 
+               href="?page={{ page_obj.next_page_number }}{% if search_query %}&q={{ search_query }}{% endif %}">
+                Próxima
+            </a>
+        </li>
+        <li class="page-item">
+            <a class="page-link" 
+               href="?page={{ page_obj.paginator.num_pages }}{% if search_query %}&q={{ search_query }}{% endif %}">
+                Última &raquo;
+            </a>
+        </li>
+        {% endif %}
+    </ul>
+</nav>
+{% endif %}
+{% endblock %}
+
+#####################################################################################################################
+
+projeto_bingo/core/templates/core/acertos/registrar.html
+
+<div class="card shadow">
+    <div class="card-header bg-success text-white">
+        <i class="bi bi-cash-coin"></i> Registrar Acerto
+    </div>
+    <div class="card-body">
+        <form id="acertoForm" method="post">
+            {% csrf_token %}
+            
+            <!-- Seleção do Movimento -->
+            <div class="mb-3">
+                <label class="form-label">Movimento</label>
+                <select name="movimento" class="form-select" required id="movimentoSelect">
+                    <option value="">Selecione...</option>
+                    {% for m in movimentos %}
+                    <option value="{{ m.id }}" data-pendentes="{{ m.cartelas_pendentes }}">
+                        {{ m.nome }} ({{ m.cartelas_pendentes }} pendentes)
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            
+            <!-- Quantidades -->
+            <div class="row g-3 mb-3">
+                <div class="col-md-4">
+                    <label class="form-label">Cartelas Vendidas</label>
+                    <input type="number" name="qtd_vendidas" class="form-control" min="0" id="qtdVendidas">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Cartelas Devolvidas</label>
+                    <input type="number" name="qtd_devolvidas" class="form-control" min="0" id="qtdDevolvidas">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Cortesias Geradas</label>
+                    <input type="number" class="form-control" id="cortesias" readonly>
+                </div>
+            </div>
+            
+            <!-- Pagamento -->
+            <div class="row g-3 mb-3">
+                <div class="col-md-4">
+                    <label class="form-label">Valor Unitário</label>
+                    <input type="text" class="form-control" value="R$ 10,00" readonly>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Total a Pagar</label>
+                    <input type="text" name="valor_total" class="form-control" id="totalPagar" readonly>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Valor Recebido</label>
+                    <input type="number" name="valor_recebido" class="form-control" min="0" step="0.01" id="valorRecebido">
+                </div>
+            </div>
+            
+            <div class="mb-3">
+                <label class="form-label">Tipo de Pagamento</label>
+                <select name="tipo_pagamento" class="form-select" required>
+                    <option value="">Selecione...</option>
+                    <option value="DINHEIRO">Dinheiro</option>
+                    <option value="PIX">PIX</option>
+                    <option value="CARTAO">Cartão</option>
+                </select>
+            </div>
+            
+            <div class="alert alert-info" id="trocoAlert" style="display:none;">
+                Troco: <span id="trocoValue">R$ 0,00</span>
+            </div>
+            
+            <button type="submit" class="btn btn-success">
+                <i class="bi bi-check-circle"></i> Registrar Acerto
+            </button>
+        </form>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const movimentoSelect = document.getElementById('movimentoSelect');
+    const qtdVendidas = document.getElementById('qtdVendidas');
+    const qtdDevolvidas = document.getElementById('qtdDevolvidas');
+    const cortesias = document.getElementById('cortesias');
+    const totalPagar = document.getElementById('totalPagar');
+    const valorRecebido = document.getElementById('valorRecebido');
+    const trocoAlert = document.getElementById('trocoAlert');
+    const trocoValue = document.getElementById('trocoValue');
+    
+    // Cálculos automáticos
+    function calcular() {
+        
+        // Validações
+        if (vendidas + devolvidas > pendentes) {
+            alert(`Total excede as cartelas pendentes (${pendentes})`);
+            qtdVendidas.value = '';
+            qtdDevolvidas.value = '';
+            return;
+        }
+        
+        // Cálculos
+        const novasCortesias = Math.floor(vendidas / 10);
+        const valorTotal = (vendidas - novasCortesias) * 10;
+        
+        cortesias.value = novasCortesias;
+        totalPagar.value = 'R$ ' + valorTotal.toFixed(2);
+        
+        // Troco
+        if (recebido > valorTotal) {
+            trocoValue.textContent = 'R$ ' + (recebido - valorTotal).toFixed(2);
+            trocoAlert.style.display = 'block';
+        } else {
+            trocoAlert.style.display = 'none';
+        }
+    }
+    
+    // Event listeners
+    qtdVendidas.addEventListener('input', calcular);
+    qtdDevolvidas.addEventListener('input', calcular);
+    valorRecebido.addEventListener('input', calcular);
+    movimentoSelect.addEventListener('change', function() {
+    });
+});
+</script>

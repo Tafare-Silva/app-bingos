@@ -1,0 +1,32 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="card shadow">
+    <div class="card-header bg-primary text-white">
+        <i class="bi bi-pencil-square"></i> {{ titulo }}
+    </div>
+    <div class="card-body">
+        <form method="post">
+            {% csrf_token %}
+            <div class="mb-3">
+                <label class="form-label">Nome</label>
+                {{ form.nome }}
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Responsável</label>
+                {{ form.responsavel }}
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Telefone</label>
+                {{ form.telefone }}
+                <small class="text-muted">Formato: (DD) XXXXX-XXXX</small>
+            </div>
+            <button type="submit" class="btn btn-primary">
+                <i class="bi bi-check-circle"></i> Salvar
+            </button>
+            <a href="{% url 'listar_movimentos' %}" class="btn btn-secondary">
+                <i class="bi bi-arrow-left"></i> Cancelar
+            </a>
+        </form>
+    </div>
+</div>
+{% endblock %}

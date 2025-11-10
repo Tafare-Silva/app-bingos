@@ -1,0 +1,65 @@
+{% extends 'base.html' %}
+
+{% block title %}Gerenciar Acertos{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="bi bi-journal-check"></i> Gerenciamento de Acertos</h2>
+        <a href="{% url 'registrar_acerto' %}" class="btn btn-primary"> 
+            <i class="bi bi-plus-circle"></i> Registrar Novo Acerto
+        </a>
+    </div>
+
+    <!-- Barra de Busca -->
+    <div class="mb-4">
+        <form method="get">
+            <div class="input-group">
+                <input type="text" name="q" class="form-control" placeholder="Buscar por movimento ou membro..." value="{{ query }}">
+                <button class="btn btn-outline-secondary" type="submit"><i class="bi bi-search"></i></button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Tabela de Acertos -->
+    <div class="table-responsive">
+        <table class="table table-hover align-middle">
+            <thead class="table-light">
+                <tr>
+                    <th scope="col">Movimento</th>
+                    <th scope="col">Membro Responsável</th>
+                    <th scope="col">Data</th>
+                    <th scope="col" class="text-end">Valor Total</th>
+                    <th scope="col" class="text-center">Ações</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for acerto in acertos %}
+                <tr>
+                    <td>{{ acerto.movimento.nome }}</td>
+                    <td>{{ acerto.membro_pastoral }}</td>
+                    <td>{{ acerto.data|date:"d/m/Y" }}</td>
+                    <td class="text-end">R$ {{ acerto.valor_total|stringformat:".2f" }}</td>
+                    <td class="text-center">
+                        <!-- BOTÕES DE AÇÃO -->
+                        <a href="{% url 'editar_acerto' acerto.id %}" class="btn btn-sm btn-outline-secondary" title="Editar Acerto">
+                            <i class="bi bi-pencil"></i>
+                        </a>
+                        <a href="{% url 'cancelar_acerto' acerto.id %}" class="btn btn-sm btn-outline-danger" title="Cancelar Acerto">
+                            <i class="bi bi-trash"></i>
+                        </a>
+                        <a href="{% url 'relatorio_acerto' acerto.id %}" class="btn btn-sm btn-outline-info" title="Ver Recibo">
+                            <i class="bi bi-receipt"></i>
+                        </a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5" class="text-center text-muted p-4">Nenhum acerto encontrado.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
